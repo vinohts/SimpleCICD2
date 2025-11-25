@@ -37,7 +37,6 @@ pipeline {
         stage('Publish') {
             steps {
                 bat "dotnet publish \"%API_PROJECT%\" -c %BUILD_CONFIGURATION% -o %OUTPUT_DIR%"
-                // use triple-single quotes to avoid Groovy interpolation
                 bat '''
                     powershell -Command "if (Test-Path 'simplecicd.zip') { Remove-Item 'simplecicd.zip' -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath simplecicd.zip -Force"
                 '''
@@ -48,11 +47,9 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'MY_API_KEY', variable: 'MY_API_KEY')]) {
                     echo "Injecting Jenkins secret into %OUTPUT_DIR%\\appsettings.json..."
-                    // triple-single quote to avoid Groovy trying to parse $env:MY_API_KEY or regex
                     bat '''
-                        powershell -Command "(Get-Content '%OUTPUT_DIR%\\appsettings.json') -replace '\$\{API_KEY_PLACEHOLDER\}', '$env:MY_API_KEY' | Set-Content '%OUTPUT_DIR%\\appsettings.json'"
+                        powershell -Command "$content = Get-Content '%OUTPUT_DIR%\\appsettings.json' -Raw; $content = $content.Replace('${API_KEY_PLACEHOLDER}', $env:MY_API_KEY); Set-Content -Path '%OUTPUT_DIR%\\appsettings.json' -Value $content"
                     '''
-                    // recreate the zip so it contains the replaced file
                     bat '''
                         powershell -Command "if (Test-Path 'simplecicd.zip') { Remove-Item 'simplecicd.zip' -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath simplecicd.zip -Force"
                     '''
@@ -71,18 +68,17 @@ pipeline {
                 echo "Copying ${ARTIFACT_NAME} to ${env.DEST_DIR}"
                 bat '''
                     if not exist "%DEST_DIR%" (mkdir "%DEST_DIR%")
-                    copy /Y "%WORKSPACE%\simplecicd.zip" "%DEST_DIR%\simplecicd.zip"
+                    copy /Y "%WORKSPACE%\\simplecicd.zip" "%DEST_DIR%\\simplecicd.zip"
                 '''
             }
         }
 
         stage('Upload to S3') {
             steps {
-                // requires Pipeline: AWS Steps plugin and a proper AWS Credentials object named 'aws-credentials-id'
                 withAWS(credentials: 'aws-credentials-id', region: "${params.AWS_REGION}") {
                     echo "Uploading ${ARTIFACT_NAME} to s3://${params.S3_BUCKET}/"
                     bat '''
-                        aws s3 cp "%WORKSPACE%\simplecicd.zip" "s3://%S3_BUCKET%/simplecicd.zip" --region %AWS_REGION%
+                        aws s3 cp "%WORKSPACE%\\simplecicd.zip" "s3://%S3_BUCKET%/simplecicd.zip" --region %AWS_REGION%
                     '''
                 }
             }
