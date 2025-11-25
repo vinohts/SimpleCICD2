@@ -1,0 +1,3 @@
+﻿<Project>
+  <Import Project="..\build\SimpleCICD.WebApp.props" />
+</Project>

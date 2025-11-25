@@ -1,0 +1,7 @@
+D:\devops-handson\SimpleCICD2\publish\SimpleCICD.WebApp.exe
+D:\devops-handson\SimpleCICD2\publish\appsettings.Development.json
+D:\devops-handson\SimpleCICD2\publish\appsettings.json
+D:\devops-handson\SimpleCICD2\publish\SimpleCICD.WebApp.dll
+D:\devops-handson\SimpleCICD2\publish\SimpleCICD.WebApp.deps.json
+D:\devops-handson\SimpleCICD2\publish\SimpleCICD.WebApp.runtimeconfig.json
+D:\devops-handson\SimpleCICD2\publish\SimpleCICD.WebApp.pdb
