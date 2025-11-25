@@ -47,26 +47,29 @@ pipeline {
 
         stage('Fetch secret & Replace Placeholder') {
             steps {
-                // requires Pipeline: AWS Steps plugin and an AWS Credentials object named 'aws-credentials-id'
-                withAWS(credentials: 'aws-credentials-id', region: "${params.AWS_REGION}") {
-                    echo "Fetching secret '${params.SECRET_NAME}' from Secrets Manager..."
-                    bat '''
-                        powershell -NoProfile -Command ^
-                          "$secretJson = (aws secretsmanager get-secret-value --secret-id '%SECRET_NAME%' --region %AWS_REGION% --query SecretString --output text) ; " ^
-                          "if (-not $secretJson) { Write-Error 'Secret fetch failed or returned empty'; exit 1 } ; " ^
-                          "if ('%SECRET_JSON_FIELD%' -ne '') { $obj = $secretJson | ConvertFrom-Json ; $secretValue = $obj.%SECRET_JSON_FIELD% } else { $secretValue = $secretJson } ; " ^
-                          "if (-not $secretValue) { Write-Error 'Secret field not found or empty'; exit 1 } ; " ^
-                          "$pub = '%OUTPUT_DIR%\\appsettings.json' ; " ^
-                          "if (-not (Test-Path $pub)) { Write-Error ('Publish appsettings.json not found at ' + $pub); exit 1 } ; " ^
-                          "$content = Get-Content $pub -Raw ; " ^
-                          "$new = $content.Replace('${SECRET_KEY}', $secretValue) ; " ^
-                          "Set-Content -Path $pub -Value $new ; " ^
-                          "Exit 0"
-                    '''
-                    // recreate ZIP so it contains the replaced appsettings.json
-                    bat '''
-                        powershell -Command "if (Test-Path '%ARTIFACT_NAME%') { Remove-Item '%ARTIFACT_NAME%' -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath %ARTIFACT_NAME% -Force"
-                    '''
+                // Export params into shell environment variables so the bat block can use %SECRET_NAME% and %SECRET_JSON_FIELD%
+                withEnv(["SECRET_NAME=${params.SECRET_NAME}", "SECRET_JSON_FIELD=${params.SECRET_JSON_FIELD}"]) {
+                  // withAWS ensures aws CLI uses the Jenkins AWS credential
+                  withAWS(credentials: 'aws-credentials-id', region: "${params.AWS_REGION}") {
+                      echo "Fetching secret '%SECRET_NAME%' from AWS Secrets Manager (region ${params.AWS_REGION})..."
+                      bat '''
+                          powershell -NoProfile -Command ^
+                            "$secretJson = (aws secretsmanager get-secret-value --secret-id '%SECRET_NAME%' --region %AWS_REGION% --query SecretString --output text) ; " ^
+                            "if (-not $secretJson) { Write-Error 'Secret fetch failed or returned empty'; exit 1 } ; " ^
+                            "if ('%SECRET_JSON_FIELD%' -ne '') { $obj = $secretJson | ConvertFrom-Json ; $secretValue = $obj.%SECRET_JSON_FIELD% } else { $secretValue = $secretJson } ; " ^
+                            "if (-not $secretValue) { Write-Error 'Secret field not found or empty'; exit 1 } ; " ^
+                            "$pub = '%OUTPUT_DIR%\\appsettings.json' ; " ^
+                            "if (-not (Test-Path $pub)) { Write-Error ('Publish appsettings.json not found at ' + $pub); exit 1 } ; " ^
+                            "$content = Get-Content $pub -Raw ; " ^
+                            "$new = $content.Replace('${SECRET_KEY}', $secretValue) ; " ^
+                            "Set-Content -Path $pub -Value $new ; " ^
+                            "Exit 0"
+                      '''
+                      // Recreate the zip so it contains the replaced appsettings.json
+                      bat '''
+                          powershell -Command "if (Test-Path '%ARTIFACT_NAME%') { Remove-Item '%ARTIFACT_NAME%' -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath %ARTIFACT_NAME% -Force"
+                      '''
+                  }
                 }
             }
         }
@@ -77,9 +80,9 @@ pipeline {
             }
         }
 
-        stage('Copy artifact to D:\\\\temp') {
+        stage('Copy artifact to D:\\temp') {
             steps {
-                echo "Copying %ARTIFACT_NAME% to %DEST_DIR%"
+                echo "Copying ${env.ARTIFACT_NAME} to ${env.DEST_DIR}"
                 bat '''
                     if not exist "%DEST_DIR%" (mkdir "%DEST_DIR%")
                     copy /Y "%WORKSPACE%\\%ARTIFACT_NAME%" "%DEST_DIR%\\%ARTIFACT_NAME%"
