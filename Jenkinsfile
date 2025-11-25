@@ -61,7 +61,7 @@ pipeline {
 
         stage('Archive Artifact') {
             steps {
-                archiveArtifacts artifacts: "%ARTIFACT_NAME%", fingerprint: true
+                archiveArtifacts artifacts: "${env.ARTIFACT_NAME}", fingerprint: true
             }
         }
 
