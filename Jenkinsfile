@@ -3,7 +3,9 @@ pipeline {
 
     parameters {
         string(name: 'S3_BUCKET', defaultValue: 'simplecicd-artifacts-vino', description: 'S3 bucket to upload artifact')
-        string(name: 'AWS_REGION', defaultValue: 'ap-south-1', description: 'AWS region for S3')
+        string(name: 'AWS_REGION', defaultValue: 'ap-south-1', description: 'AWS region for SecretsManager & S3')
+        string(name: 'SECRET_NAME', defaultValue: 'simplecicd/app-secrets', description: 'AWS Secrets Manager secret name (or ARN)')
+        string(name: 'SECRET_JSON_FIELD', defaultValue: 'ApiKey', description: 'If secret is JSON, the field to extract; leave blank if secret is plain string')
     }
 
     environment {
@@ -38,20 +40,30 @@ pipeline {
             steps {
                 bat "dotnet publish \"%WEB_PROJECT%\" -c %BUILD_CONFIGURATION% -o %OUTPUT_DIR%"
                 bat '''
-                    powershell -Command "if (Test-Path %ARTIFACT_NAME%) { Remove-Item %ARTIFACT_NAME% -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath %ARTIFACT_NAME% -Force"
+                    powershell -Command "if (Test-Path '%ARTIFACT_NAME%') { Remove-Item '%ARTIFACT_NAME%' -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath %ARTIFACT_NAME% -Force"
                 '''
             }
         }
 
-        stage('Replace Secret Placeholder') {
+        stage('Fetch secret & Replace Placeholder') {
             steps {
-                // Replace ${SECRET_KEY} (project2 placeholder) with the Jenkins secret MY_API_KEY
-                withCredentials([string(credentialsId: 'MY_API_KEY', variable: 'MY_API_KEY')]) {
-                    echo "Injecting secret into %OUTPUT_DIR%\\appsettings.json..."
-                    // use .Replace to avoid regex and Groovy parsing issues
+                // requires Pipeline: AWS Steps plugin and an AWS Credentials object named 'aws-credentials-id'
+                withAWS(credentials: 'aws-credentials-id', region: "${params.AWS_REGION}") {
+                    echo "Fetching secret '${params.SECRET_NAME}' from Secrets Manager..."
                     bat '''
-                        powershell -Command "$content = Get-Content '%OUTPUT_DIR%\\appsettings.json' -Raw; $content = $content.Replace('${SECRET_KEY}', $env:MY_API_KEY); Set-Content -Path '%OUTPUT_DIR%\\appsettings.json' -Value $content"
+                        powershell -NoProfile -Command ^
+                          "$secretJson = (aws secretsmanager get-secret-value --secret-id '%SECRET_NAME%' --region %AWS_REGION% --query SecretString --output text) ; " ^
+                          "if (-not $secretJson) { Write-Error 'Secret fetch failed or returned empty'; exit 1 } ; " ^
+                          "if ('%SECRET_JSON_FIELD%' -ne '') { $obj = $secretJson | ConvertFrom-Json ; $secretValue = $obj.%SECRET_JSON_FIELD% } else { $secretValue = $secretJson } ; " ^
+                          "if (-not $secretValue) { Write-Error 'Secret field not found or empty'; exit 1 } ; " ^
+                          "$pub = '%OUTPUT_DIR%\\appsettings.json' ; " ^
+                          "if (-not (Test-Path $pub)) { Write-Error ('Publish appsettings.json not found at ' + $pub); exit 1 } ; " ^
+                          "$content = Get-Content $pub -Raw ; " ^
+                          "$new = $content.Replace('${SECRET_KEY}', $secretValue) ; " ^
+                          "Set-Content -Path $pub -Value $new ; " ^
+                          "Exit 0"
                     '''
+                    // recreate ZIP so it contains the replaced appsettings.json
                     bat '''
                         powershell -Command "if (Test-Path '%ARTIFACT_NAME%') { Remove-Item '%ARTIFACT_NAME%' -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath %ARTIFACT_NAME% -Force"
                     '''
@@ -77,10 +89,13 @@ pipeline {
 
         stage('Upload to S3') {
             steps {
-                // requires Pipeline: AWS Steps plugin and an AWS Credentials object named 'aws-credentials-id'
                 withAWS(credentials: 'aws-credentials-id', region: "${params.AWS_REGION}") {
                     echo "Uploading %ARTIFACT_NAME% to s3://${params.S3_BUCKET}/"
                     bat '''
+                        if not exist "%WORKSPACE%\\%ARTIFACT_NAME%" (
+                          echo Artifact not found: %WORKSPACE%\\%ARTIFACT_NAME%
+                          exit /b 1
+                        )
                         aws s3 cp "%WORKSPACE%\\%ARTIFACT_NAME%" "s3://%S3_BUCKET%/%ARTIFACT_NAME%" --region %AWS_REGION%
                     '''
                 }
@@ -89,11 +104,7 @@ pipeline {
     }
 
     post {
-        success {
-            echo "Pipeline completed successfully. Artifact copied to %DEST_DIR% and uploaded to s3://${params.S3_BUCKET}/%ARTIFACT_NAME%"
-        }
-        failure {
-            echo "Pipeline FAILED — check console output."
-        }
+        success { echo "Pipeline finished: artifact uploaded to s3://${params.S3_BUCKET}/${ARTIFACT_NAME}" }
+        failure { echo "Pipeline failed — check console logs." }
     }
 }
