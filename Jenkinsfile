@@ -38,7 +38,7 @@ pipeline {
             steps {
                 bat "dotnet publish \"%WEB_PROJECT%\" -c %BUILD_CONFIGURATION% -o %OUTPUT_DIR%"
                 bat '''
-                    powershell -Command "if (Test-Path '%ARTIFACT_NAME%') { Remove-Item '%ARTIFACT_NAME%' -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath %ARTIFACT_NAME% -Force"
+                    powershell -Command "if (Test-Path %ARTIFACT_NAME%) { Remove-Item %ARTIFACT_NAME% -Force }; Compress-Archive -Path %OUTPUT_DIR%\\* -DestinationPath %ARTIFACT_NAME% -Force"
                 '''
             }
         }
